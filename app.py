@@ -27,6 +27,10 @@ def receive_message():
         # get message from SNS
         if hdr == 'Notification':
             msg_process(msg['Message'], msg['Timestamp'])
+
+        ret_msg = {
+            'status': 'success',
+        }
     except Exception as e:
         print(e)
         ret_msg = {
@@ -34,10 +38,6 @@ def receive_message():
         }
         pass
 
-
-    ret_msg = {
-        'status': 'success',
-    }
     if ret_msg['status'] == 'success':
         return make_response(json.dumps(ret_msg), 200)
     else:
