@@ -1,5 +1,6 @@
 # 라이브러리 호출
 import cv2
+import asyncio
 from ultralytics import YOLO
 import os
 from PIL import Image
@@ -24,7 +25,7 @@ def loadDetectionModel():
 
 # input: VideoPath // output: (5프레임당 Crop된 image Caption 문장 + Original Image Caption 문장)
     # if Detection Model에서 Person이 안잡힐 경우 --> Crop된 image Caption 문장: None
-def generateCaption(video_path):
+async def generateCaption(video_path):
     x_vector = []
     y_vector = []
     names = yolo_model.names
