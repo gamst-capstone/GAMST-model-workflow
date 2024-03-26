@@ -1,31 +1,41 @@
 # 라이브러리 호출
 import cv2
-import asyncio
 from ultralytics import YOLO
-import os
+import os, logging
 from PIL import Image
 from transformers import BlipProcessor, BlipForConditionalGeneration
 
+logger = logging.getLogger()
+logging.basicConfig(level=logging.INFO)
+
+processor = None
+blip_model = None
+yolo_model = None
 
 # Captioning Model 로드하는 함수
 def loadCaptionModel():
     # BLIP Model Load
-    global processor
-    processor= BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-large")
-    # blip_model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-large")
-    global blip_model
-    blip_model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-large").to("cuda")
+    global processor, blip_model
+    if processor is None or blip_model is None:
+        processor= BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-large")
+        # blip_model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-large")
+        blip_model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-large").to("cuda")
 
 
 # YOLO Model 로드하는 함수
 def loadDetectionModel():
     global yolo_model
-    yolo_model= YOLO('yolov8n.pt')
+    if yolo_model is None:
+        yolo_model= YOLO('yolov8n.pt')
 
 
 # input: VideoPath // output: (5프레임당 Crop된 image Caption 문장 + Original Image Caption 문장)
     # if Detection Model에서 Person이 안잡힐 경우 --> Crop된 image Caption 문장: None
 async def generateCaption(video_path):
+
+    loadCaptionModel()
+    loadDetectionModel()
+
     x_vector = []
     y_vector = []
     names = yolo_model.names

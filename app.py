@@ -5,6 +5,7 @@ import requests
 import boto3
 import os
 import logging
+import asyncio
 
 from capstone_function import generateCaption
 
@@ -14,7 +15,6 @@ sqs = boto3.client('sqs', region_name=os.environ['AWS_REGION'], aws_access_key_i
 
 logger = logging.getLogger()
 logging.basicConfig(level=logging.INFO)
-
 
 @app.route('/receive', methods=['POST'])
 async def receive_message():
@@ -30,7 +30,7 @@ async def receive_message():
 
         # get message from SNS
         if hdr == 'Notification':
-            await msg_process(msg['Message'], msg['Timestamp'])
+            asyncio.create_task(msg_process(msg['Message'], msg['Timestamp']))
 
         ret_msg = {
             'status': 'success',
@@ -64,7 +64,8 @@ async def msg_process(msg, timestamp):
             video_url = f"https://{bucket_name}.s3.amazonaws.com/{object_name}"
             logger.info(video_url)
 
-            await generateCaption(video_url)
+            # await generateCaption(video_url)
+            asyncio.create_task(generateCaption(video_url))
             logger.info("model working")
     except Exception as e:
         logger.error(e)
