@@ -5,23 +5,28 @@ import requests
 import boto3
 import os
 import logging
-import asyncio
+import threading
 
-from capstone_function import generateCaption
-
-app = Flask(__name__)
-load_dotenv()
-sqs = boto3.client('sqs', region_name=os.environ['AWS_REGION'], aws_access_key_id=os.environ['AWS_ACCESS_KEY'], aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY'])
-
+from capstone_function import generateCaption, loadCaptionModel, loadDetectionModel
 logger = logging.getLogger()
 logging.basicConfig(level=logging.INFO)
 
+app = Flask(__name__)
+load_dotenv()
+
+sqs = boto3.client('sqs', region_name=os.environ['AWS_REGION'], aws_access_key_id=os.environ['AWS_ACCESS_KEY'], aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY'])
+
+logger.info("[*] Loading Models...")
+loadCaptionModel()
+loadDetectionModel()
+
+thread = threading.Event()
+
 @app.route('/receive', methods=['POST'])
-async def receive_message():
+def receive_message():
     # get SNS message from request
     try:
         msg = json.loads(request.data)
-
         hdr = request.headers.get('x-amz-sns-message-type')
 
         # confirm for SNS subscription
@@ -30,7 +35,12 @@ async def receive_message():
 
         # get message from SNS
         if hdr == 'Notification':
-            asyncio.create_task(msg_process(msg['Message'], msg['Timestamp']))
+            # asyncio.create_task(msg_process(msg['Message'], msg['Timestamp']))
+            thread.set()
+            msg_process_thread = threading.Thread(target=msg_process, args=(msg['Message'], msg['Timestamp']))
+            msg_process_thread.start()
+            
+            logger.info("msg_process started")
 
         ret_msg = {
             'status': 'success',
@@ -51,7 +61,7 @@ def get_sqs_url():
     res = sqs.get_queue_url(QueueName=os.environ['SQS_QUEUE_NAME'])
     return res['QueueUrl']
 
-async def msg_process(msg, timestamp):
+def msg_process(msg, timestamp):
     try:
         # process SNS message
         parsed_json = json.loads(msg)
@@ -62,10 +72,10 @@ async def msg_process(msg, timestamp):
             bucket_name = s3['s3']['bucket']['name']
             object_name = s3['s3']['object']['key']
             video_url = f"https://{bucket_name}.s3.amazonaws.com/{object_name}"
-            logger.info(video_url)
+            logger.info(f"Video URL : {video_url}")
 
-            # await generateCaption(video_url)
-            asyncio.create_task(generateCaption(video_url))
+            # asyncio.create_task(generateCaption(video_url))
+            generateCaption(video_url)
             logger.info("model working")
     except Exception as e:
         logger.error(e)

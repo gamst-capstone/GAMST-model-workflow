@@ -4,6 +4,7 @@ from ultralytics import YOLO
 import os, logging
 from PIL import Image
 from transformers import BlipProcessor, BlipForConditionalGeneration
+from tqdm import tqdm
 
 logger = logging.getLogger()
 logging.basicConfig(level=logging.INFO)
@@ -30,64 +31,68 @@ def loadDetectionModel():
 
 
 # input: VideoPath // output: (5프레임당 Crop된 image Caption 문장 + Original Image Caption 문장)
-    # if Detection Model에서 Person이 안잡힐 경우 --> Crop된 image Caption 문장: None
-async def generateCaption(video_path):
-
-    loadCaptionModel()
-    loadDetectionModel()
-
+# if Detection Model에서 Person이 안잡힐 경우 --> Crop된 image Caption 문장: None
+def generateCaption(video_path):
     x_vector = []
     y_vector = []
     names = yolo_model.names
-    if os.path.isfile(video_path):
-        cap = cv2.VideoCapture(video_path)
-    else:
-        print("파일이 존재하지 않습니다.")
-    while cap.isOpened():
-        ret, frame = cap.read()
 
-        if not ret:
-            break
+    logger.info("[*] Loading Video File...")    
+    # video_path = HTTP URL from s3 bucket object
+    cap = cv2.VideoCapture(video_path)
+    frame_count = 0
 
-        if frame_count % 5 == 0:
-            crop_data_caption = None
-            pil_raw_image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-            # raw_input = processor(pil_raw_image, return_tensors="pt")
-            raw_input = processor(pil_raw_image, return_tensors="pt").to("cuda")
-            raw_out = blip_model.generate(**raw_input)
+    length = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    logger.info(f"[*] Video Length: {length}, FPS: {fps}")
+    
+    with tqdm(total=length) as pbar:
+        while cap.isOpened():
+            ret, frame = cap.read()
 
-            original_data_caption = (processor.decode(raw_out[0], skip_special_token=True))
-            print(f"Frame Count: {frame_count}, Original_data_caption: {original_data_caption}")
+            if not ret:
+                break
 
-            results = yolo_model(frame)
-            boxes = results[0].boxes
+            if frame_count % 5 == 0:
+                crop_data_caption = None
+                pil_raw_image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+                # raw_input = processor(pil_raw_image, return_tensors="pt")
+                raw_input = processor(pil_raw_image, return_tensors="pt").to("cuda")
+                raw_out = blip_model.generate(**raw_input)
 
-            for box in boxes:
-                frame_boxes = box.xyxy.cpu().detach().numpy().tolist()
-                frame_class = box.cls.cpu().detach().numpy().tolist()
-                for bbox, case_id in zip(frame_boxes, frame_class):
-                    if names[case_id] == 'person':
-                        x_vector.append(bbox[0])
-                        x_vector.append(bbox[2])
-                        y_vector.append(bbox[1])
-                        y_vector.append(bbox[3])
-                        # print(f'x_vector: {x_vector}, y_vector: {y_vector}')
-            if len(x_vector) != 0 and len(y_vector) != 0:
-                x_min, x_max = int(min(x_vector)), int(max(x_vector))
-                y_min, y_max = int(min(y_vector)), int(max(y_vector))
-                # print(f'x_min:{x_min}, x_max:{x_max}, y_min:{y_min}, y_max:{y_max}')
+                original_data_caption = (processor.decode(raw_out[0], skip_special_token=True))
+                logger.info(f"Frame Count: {frame_count}, Original_data_caption: {original_data_caption}")
 
-                crop_img = frame[y_min:y_max, x_min:x_max]  # y값 먼저, x값 나중
+                results = yolo_model(frame)
+                boxes = results[0].boxes
 
-                pil_crop_img = Image.fromarray(cv2.cvtColor(crop_img, cv2.COLOR_BGR2RGB))
-                # crop_input = processor(pil_crop_img, return_tensors="pt")
-                crop_input = processor(pil_crop_img, return_tensors="pt").to("cuda")
-                crop_out = blip_model.generate(**crop_input)
+                for box in boxes:
+                    frame_boxes = box.xyxy.cpu().detach().numpy().tolist()
+                    frame_class = box.cls.cpu().detach().numpy().tolist()
+                    for bbox, case_id in zip(frame_boxes, frame_class):
+                        if names[case_id] == 'person':
+                            x_vector.append(bbox[0])
+                            x_vector.append(bbox[2])
+                            y_vector.append(bbox[1])
+                            y_vector.append(bbox[3])
+                            # print(f'x_vector: {x_vector}, y_vector: {y_vector}')
+                if len(x_vector) != 0 and len(y_vector) != 0:
+                    x_min, x_max = int(min(x_vector)), int(max(x_vector))
+                    y_min, y_max = int(min(y_vector)), int(max(y_vector))
+                    # print(f'x_min:{x_min}, x_max:{x_max}, y_min:{y_min}, y_max:{y_max}')
 
-                crop_data_caption = processor.decode(crop_out[0], skip_special_token=True)
-                print(f"Frame Count: {frame_count}, Crop_data_caption: {crop_data_caption}")
+                    crop_img = frame[y_min:y_max, x_min:x_max]  # y값 먼저, x값 나중
 
-            x_vector.clear()
-            y_vector.clear()
-        frame_count += 1
+                    pil_crop_img = Image.fromarray(cv2.cvtColor(crop_img, cv2.COLOR_BGR2RGB))
+                    # crop_input = processor(pil_crop_img, return_tensors="pt")
+                    crop_input = processor(pil_crop_img, return_tensors="pt").to("cuda")
+                    crop_out = blip_model.generate(**crop_input)
+
+                    crop_data_caption = processor.decode(crop_out[0], skip_special_token=True)
+                    logger.info(f"Frame Count: {frame_count}, Crop_data_caption: {crop_data_caption}")
+
+                x_vector.clear()
+                y_vector.clear()
+            pbar.update(1)
+            frame_count += 1
     cap.release()
