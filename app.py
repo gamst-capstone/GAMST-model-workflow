@@ -14,7 +14,12 @@ logging.basicConfig(level=logging.INFO)
 app = Flask(__name__)
 load_dotenv()
 
-sqs = boto3.client('sqs', region_name=os.environ['AWS_REGION'], aws_access_key_id=os.environ['AWS_ACCESS_KEY'], aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY'])
+sqs = boto3.client(
+    'sqs',
+    region_name=os.getenv("AWS_REGION", "ap-northeast-2"),
+    aws_access_key_id=os.getenv("AWS_ACCESS_KEY", ""),
+    aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY", "")
+)
 
 logger.info("[*] Loading Models...")
 loadCaptionModel()
@@ -56,10 +61,6 @@ def receive_message():
         return make_response(json.dumps(ret_msg), 200)
     else:
         return make_response(json.dumps(ret_msg), 400)
-
-def get_sqs_url():
-    res = sqs.get_queue_url(QueueName=os.environ['SQS_QUEUE_NAME'])
-    return res['QueueUrl']
 
 def msg_process(msg, timestamp):
     try:

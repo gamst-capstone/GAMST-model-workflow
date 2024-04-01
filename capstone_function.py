@@ -1,21 +1,63 @@
 # 라이브러리 호출
-import cv2
 from ultralytics import YOLO
-import os, logging
 from PIL import Image
 from transformers import BlipProcessor, BlipForConditionalGeneration
 from tqdm import tqdm
+from dotenv import load_dotenv
+
+import cv2
+import pymysql
+import os, logging
 
 logger = logging.getLogger()
 logging.basicConfig(level=logging.INFO)
+
+load_dotenv()
+DB_HOST = os.getenv("DB_HOST", "localhost")
+DB_NAME = os.getenv("DB_NAME", "gamst")
+DB_USER = os.getenv("DB_USER", "root")
+DB_PASSWORD = os.getenv("DB_PASSWORD","")
+TABLE_NAME = os.getenv("TABLE_NAME", "video_caption")
 
 processor = None
 blip_model = None
 yolo_model = None
 
+def db_conn():
+    try:
+        conn = pymysql.connect(
+            host=DB_HOST,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            db=DB_NAME,
+            charset='utf8'
+        )
+        
+        if conn:
+            logger.info("[*] DB Connected")
+            return conn
+        else:
+            logger.error("[*] DB Connection Failed")
+            return None
+    except Exception as e:
+        logger.error(e)
+        return 
+
+
+def video_id_check(conn, video_uid):
+    with conn.cursor() as cursor:
+        sql = f"SELECT id FROM video_video WHERE url LIKE %s"
+        cursor.execute(sql, ('%' + video_uid + '%',))
+        video_id = cursor.fetchone()[0]
+        logger.info(f"[!] Found video_id : {video_id}")
+        if not video_id:
+            return []
+        return video_id
+
 # Captioning Model 로드하는 함수
 def loadCaptionModel():
     # BLIP Model Load
+    logger.info("[*] Loading BLIP Model...")
     global processor, blip_model
     if processor is None or blip_model is None:
         processor= BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-large")
@@ -25,6 +67,7 @@ def loadCaptionModel():
 
 # YOLO Model 로드하는 함수
 def loadDetectionModel():
+    logger.info("[*] Loading YOLO Model...")
     global yolo_model
     if yolo_model is None:
         yolo_model= YOLO('yolov8n.pt')
@@ -42,10 +85,23 @@ def generateCaption(video_path):
     cap = cv2.VideoCapture(video_path)
     frame_count = 0
 
+    video_uid = video_path.split('/')[-1]
     length = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     fps = cap.get(cv2.CAP_PROP_FPS)
     logger.info(f"[*] Video Length: {length}, FPS: {fps}")
     
+    try:
+        logger.info("[*] Connecting to DB...")
+        conn = db_conn()
+
+        video_id = video_id_check(conn, video_uid)
+        if not video_id:
+            logger.error("[*] Video ID not found")
+            return
+    except Exception as e:
+        logger.error(e)
+        return
+
     with tqdm(total=length) as pbar:
         while cap.isOpened():
             ret, frame = cap.read()
@@ -65,7 +121,6 @@ def generateCaption(video_path):
 
                 results = yolo_model(frame)
                 boxes = results[0].boxes
-
                 for box in boxes:
                     frame_boxes = box.xyxy.cpu().detach().numpy().tolist()
                     frame_class = box.cls.cpu().detach().numpy().tolist()
@@ -91,8 +146,23 @@ def generateCaption(video_path):
                     crop_data_caption = processor.decode(crop_out[0], skip_special_token=True)
                     logger.info(f"Frame Count: {frame_count}, Crop_data_caption: {crop_data_caption}")
 
+                parse_caption(conn, video_id, frame_count, original_data_caption, crop_data_caption)
                 x_vector.clear()
                 y_vector.clear()
             pbar.update(1)
             frame_count += 1
     cap.release()
+
+
+def parse_caption(conn, video_id, frame_num, original_data_caption, crop_data_caption):
+    if crop_data_caption is None:
+        crop_data_caption = ''
+    else:
+        try:
+            with conn.cursor() as cursor:
+                sql = f"INSERT INTO `{TABLE_NAME}` (`video_id`, `frame_number`, `original_sentence`, `cropped_sentence`, `created_at`) VALUES (%s, %s, %s, %s, NOW())"
+                cursor.execute(sql, (video_id, frame_num, original_data_caption, crop_data_caption))
+                conn.commit()
+        except Exception as e:
+            logger.error(e)
+            return
