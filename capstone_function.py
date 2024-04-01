@@ -109,7 +109,7 @@ def generateCaption(video_path):
             if not ret:
                 break
 
-            if frame_count % 5 == 0:
+            if frame_count % 10 == 0:
                 crop_data_caption = None
                 pil_raw_image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
                 # raw_input = processor(pil_raw_image, return_tensors="pt")
@@ -158,6 +158,8 @@ def parse_caption(conn, video_id, frame_num, original_data_caption, crop_data_ca
     if crop_data_caption is None:
         crop_data_caption = ''
     else:
+        crop_data_caption = crop_data_caption.replace(' [SEP]', '.')
+        original_data_caption = original_data_caption.replace(' [SEP]', '.')
         try:
             with conn.cursor() as cursor:
                 sql = f"INSERT INTO `{TABLE_NAME}` (`video_id`, `frame_number`, `original_sentence`, `cropped_sentence`, `created_at`) VALUES (%s, %s, %s, %s, NOW())"
