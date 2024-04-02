@@ -13,5 +13,17 @@ touch .env
 docker build . -t gamst-model-workflow
 
 # Run container
-docker run -d -p 8505:5000 --name gamst-model-workflow gamst-model-workflow
+docker run -d -p 5000:5000 --gpus all --name gamst-model-workflow gamst-model-workflow
+```
+
+## Docker Command
+```
+# Container Status List
+docker ps -a
+
+# Stop Container
+docker stop gamst-model-workflow
+
+# Restart Container
+docker restart gamst-model-workflow
 ```
