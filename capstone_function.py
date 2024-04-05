@@ -1,13 +1,14 @@
 # 라이브러리 호출
 from ultralytics import YOLO
 from PIL import Image
-from transformers import BlipProcessor, BlipForConditionalGeneration
+from transformers import BlipProcessor, BlipForConditionalGeneration, AutoTokenizer, AutoModelForSequenceClassification
 from tqdm import tqdm
 from dotenv import load_dotenv
 
 import cv2
 import pymysql
 import os, logging
+import torch
 
 logger = logging.getLogger()
 logging.basicConfig(level=logging.INFO)
@@ -72,6 +73,14 @@ def loadDetectionModel():
     if yolo_model is None:
         yolo_model= YOLO('yolov8n.pt')
 
+# Sentimental Model 로드하는 함수
+def loadSentimentalModel():
+    logger.info("[*] Loading Sentimental Model...")
+    global sentimental_model, sentimental_tokenizer
+    if sentimental_model is None:
+        sentimental_model = AutoModelForSequenceClassification.from_pretrained("/model/path/..../")
+        sentimental_tokenizer = AutoTokenizer.from_pretrained("distilbert-base-uncased")
+        sentimental_model.eval()
 
 # input: VideoPath // output: (5프레임당 Crop된 image Caption 문장 + Original Image Caption 문장)
 # if Detection Model에서 Person이 안잡힐 경우 --> Crop된 image Caption 문장: None
@@ -146,7 +155,11 @@ def generateCaption(video_path):
                     crop_data_caption = processor.decode(crop_out[0], skip_special_token=True)
                     logger.info(f"Frame Count: {frame_count}, Crop_data_caption: {crop_data_caption}")
 
+                # 추출된 Caption Sentence를 DB에 저장하는 함수 호출
                 parse_caption(conn, video_id, frame_count, original_data_caption, crop_data_caption)
+                
+                # 추출된 Caption Sentence를 바탕으로 Sentimental Model 적용
+                generate_sentimental_score(original_data_caption)
                 x_vector.clear()
                 y_vector.clear()
             pbar.update(1)
@@ -168,3 +181,20 @@ def parse_caption(conn, video_id, frame_num, original_data_caption, crop_data_ca
         except Exception as e:
             logger.error(e)
             return
+        
+
+def generate_sentimental_score(caption_sentence):
+    # 입력 데이터를 모델이 이해할 수 있는 형태로 전처리
+    encoded_inputs = sentimental_tokenizer(caption_sentence, padding=True, truncation=True, return_tensors="pt")
+    
+    # 모델에 입력값을 통해 출력값 계산
+    with torch.no_grad():
+        outputs = sentimental_model(**encoded_inputs)
+
+    # 로짓 추출 및 소프트맥스 적용
+    logits = outputs.logits
+    predictions = torch.softmax(logits, dim=-1)
+
+    # 결과 해석
+    print(f"Input: {caption_sentence}")
+    print(f"Predictions: {predictions[0].tolist()}")
