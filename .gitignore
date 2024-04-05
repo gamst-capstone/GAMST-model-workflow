@@ -1,3 +1,5 @@
+sentimental_model/
+
 .env
 .venv
 env/

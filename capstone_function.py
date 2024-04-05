@@ -23,6 +23,8 @@ TABLE_NAME = os.getenv("TABLE_NAME", "video_caption")
 processor = None
 blip_model = None
 yolo_model = None
+sentimental_model = None
+sentimental_tokenizer = None
 
 def db_conn():
     try:
@@ -78,7 +80,7 @@ def loadSentimentalModel():
     logger.info("[*] Loading Sentimental Model...")
     global sentimental_model, sentimental_tokenizer
     if sentimental_model is None:
-        sentimental_model = AutoModelForSequenceClassification.from_pretrained("/model/path/..../")
+        sentimental_model = AutoModelForSequenceClassification.from_pretrained("/home/hyeok/GAMST-model-workflow/sentimental_model")
         sentimental_tokenizer = AutoTokenizer.from_pretrained("distilbert-base-uncased")
         sentimental_model.eval()
 
@@ -126,6 +128,7 @@ def generateCaption(video_path):
                 raw_out = blip_model.generate(**raw_input)
 
                 original_data_caption = (processor.decode(raw_out[0], skip_special_token=True))
+                original_data_caption = original_data_caption.replace(' [SEP]', '.')
                 logger.info(f"Frame Count: {frame_count}, Original_data_caption: {original_data_caption}")
 
                 results = yolo_model(frame)
@@ -153,13 +156,15 @@ def generateCaption(video_path):
                     crop_out = blip_model.generate(**crop_input)
 
                     crop_data_caption = processor.decode(crop_out[0], skip_special_token=True)
+                    crop_data_caption = crop_data_caption.replace(' [SEP]', '.')
                     logger.info(f"Frame Count: {frame_count}, Crop_data_caption: {crop_data_caption}")
 
-                # 추출된 Caption Sentence를 DB에 저장하는 함수 호출
-                parse_caption(conn, video_id, frame_count, original_data_caption, crop_data_caption)
-                
                 # 추출된 Caption Sentence를 바탕으로 Sentimental Model 적용
-                generate_sentimental_score(original_data_caption)
+                predicted_risk = generate_sentimental_score(original_data_caption)
+                
+                # 추출된 Caption Sentence를 DB에 저장하는 함수 호출
+                parse_caption(conn, video_id, frame_count, original_data_caption, crop_data_caption, predicted_risk)
+                
                 x_vector.clear()
                 y_vector.clear()
             pbar.update(1)
@@ -167,16 +172,16 @@ def generateCaption(video_path):
     cap.release()
 
 
-def parse_caption(conn, video_id, frame_num, original_data_caption, crop_data_caption):
+def parse_caption(conn, video_id, frame_num, original_data_caption, crop_data_caption, predicted_risk):
     if crop_data_caption is None:
         crop_data_caption = ''
     else:
-        crop_data_caption = crop_data_caption.replace(' [SEP]', '.')
-        original_data_caption = original_data_caption.replace(' [SEP]', '.')
+        # Decision RISK
+        is_risky = 'N' if predicted_risk[1] >= 0.85 else 'P'
         try:
             with conn.cursor() as cursor:
-                sql = f"INSERT INTO `{TABLE_NAME}` (`video_id`, `frame_number`, `original_sentence`, `cropped_sentence`, `created_at`) VALUES (%s, %s, %s, %s, NOW())"
-                cursor.execute(sql, (video_id, frame_num, original_data_caption, crop_data_caption))
+                sql = f"INSERT INTO `{TABLE_NAME}` (`video_id`, `frame_number`, `original_sentence`, `cropped_sentence`, `created_at`, `sentiment_result`) VALUES (%s, %s, %s, %s, NOW(), %s)"
+                cursor.execute(sql, (video_id, frame_num, original_data_caption, crop_data_caption, is_risky))
                 conn.commit()
         except Exception as e:
             logger.error(e)
@@ -198,3 +203,5 @@ def generate_sentimental_score(caption_sentence):
     # 결과 해석
     print(f"Input: {caption_sentence}")
     print(f"Predictions: {predictions[0].tolist()}")
+
+    return predictions[0].tolist()

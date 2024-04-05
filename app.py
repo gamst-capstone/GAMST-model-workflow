@@ -7,7 +7,7 @@ import os
 import logging
 import threading
 
-from capstone_function import generateCaption, loadCaptionModel, loadDetectionModel
+from capstone_function import generateCaption, loadCaptionModel, loadDetectionModel, loadSentimentalModel
 logger = logging.getLogger()
 logging.basicConfig(level=logging.INFO)
 
@@ -24,6 +24,7 @@ sqs = boto3.client(
 logger.info("[*] Loading Models...")
 loadCaptionModel()
 loadDetectionModel()
+loadSentimentalModel()
 
 thread = threading.Event()
 
