@@ -18,6 +18,7 @@ DB_HOST = os.getenv("DB_HOST", "localhost")
 DB_NAME = os.getenv("DB_NAME", "gamst")
 DB_USER = os.getenv("DB_USER", "root")
 DB_PASSWORD = os.getenv("DB_PASSWORD","")
+SENTIMENTAL_PATH= os.getenv("SENTIMENTAL_PATH", "")
 CAPTION_TABLE = os.getenv("CAPTION_TABLE", "video_caption")
 RISK_TABLE = os.getenv("RISK_TABLE", "video_riskysection")
 
@@ -81,7 +82,7 @@ def loadSentimentalModel():
     logger.info("[*] Loading Sentimental Model...")
     global sentimental_model, sentimental_tokenizer
     if sentimental_model is None:
-        sentimental_model = AutoModelForSequenceClassification.from_pretrained("/home/hyeok/GAMST-model-workflow/sentimental_model")
+        sentimental_model = AutoModelForSequenceClassification.from_pretrained(SENTIMENTAL_PATH)
         sentimental_tokenizer = AutoTokenizer.from_pretrained("distilbert-base-uncased")
         sentimental_model.eval()
 
