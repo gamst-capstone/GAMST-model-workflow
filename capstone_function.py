@@ -28,6 +28,12 @@ yolo_model = None
 sentimental_model = None
 sentimental_tokenizer = None
 
+# 추출 frame 단위
+FRAME_CUTOFF = 10
+
+# Sentimental score threshold (부정값)
+SENTIMENTAL_THRESHOLD = 0.85
+
 def db_conn():
     try:
         conn = pymysql.connect(
@@ -86,7 +92,7 @@ def loadSentimentalModel():
         sentimental_tokenizer = AutoTokenizer.from_pretrained("distilbert-base-uncased")
         sentimental_model.eval()
 
-# input: VideoPath // output: (5프레임당 Crop된 image Caption 문장 + Original Image Caption 문장)
+# input: VideoPath // output: (10프레임당 Crop된 image Caption 문장 + Original Image Caption 문장)
 # if Detection Model에서 Person이 안잡힐 경우 --> Crop된 image Caption 문장: None
 def generateCaption(video_path):
     x_vector = []
@@ -115,6 +121,7 @@ def generateCaption(video_path):
         logger.error(e)
         return
 
+    # Video Process
     with tqdm(total=length) as pbar:
         while cap.isOpened():
             ret, frame = cap.read()
@@ -134,6 +141,17 @@ def generateCaption(video_path):
                 original_data_caption = original_data_caption.replace(' [SEP]', '.')
                 logger.info(f"Frame Count: {frame_count}, Original_data_caption: {original_data_caption}")
 
+                # 추출된 Caption Sentence를 바탕으로 Sentimental Model 적용
+                predicted_risk = generate_sentimental_score(original_data_caption)
+
+                # Decision RISK
+                is_risky = 'N' if predicted_risk[1] >= SENTIMENTAL_THRESHOLD else 'P'
+                is_risky_crop = None
+
+                # 추출된 Caption Sentence를 DB에 저장하는 함수 호출
+                parse_caption(conn, video_id, frame_count, original_data_caption, predicted_risk[1], is_risky)
+
+                # YOLO model detection
                 results = yolo_model(frame)
                 boxes = results[0].boxes
                 for box in boxes:
@@ -146,6 +164,8 @@ def generateCaption(video_path):
                             y_vector.append(bbox[1])
                             y_vector.append(bbox[3])
                             # print(f'x_vector: {x_vector}, y_vector: {y_vector}')
+
+                # Crop된 이미지가 존재하는 경우
                 if len(x_vector) != 0 and len(y_vector) != 0:
                     x_min, x_max = int(min(x_vector)), int(max(x_vector))
                     y_min, y_max = int(min(y_vector)), int(max(y_vector))
@@ -162,20 +182,20 @@ def generateCaption(video_path):
                     crop_data_caption = crop_data_caption.replace(' [SEP]', '.')
                     logger.info(f"Frame Count: {frame_count}, Crop_data_caption: {crop_data_caption}")
 
-                # 추출된 Caption Sentence를 바탕으로 Sentimental Model 적용
-                predicted_risk = generate_sentimental_score(original_data_caption)
-                        
-                # Decision RISK
-                is_risky = 'N' if predicted_risk[1] >= 0.85 else 'P'
+                    # Crop된 이미지에서 추출된 Caption Sentence를 바탕으로 Sentimental Model 적용
+                    predicted_risk_crop = generate_sentimental_score(crop_data_caption)
+                            
+                    # Decision RISK
+                    is_risky_crop = 'N' if predicted_risk_crop[1] >= SENTIMENTAL_THRESHOLD else 'P'
 
-                # 추출된 Caption Sentence를 DB에 저장하는 함수 호출
-                parse_caption(conn, video_id, frame_count, original_data_caption, crop_data_caption, is_risky)
+                    # Crop된 이미지에서 추출된 Caption Sentence를 DB에 저장하는 함수 호출
+                    parse_caption(conn, video_id, frame_count, crop_data_caption, predicted_risk_crop[1], is_risky_crop)
                 
-                # RISK 구간 판별
-                if is_risky == 'N':
+                # RISK 구간 판별 -> 각 프레임에서 추출된 문장들 중 하나라도 risk가 존재하면, 해당 프레임은 risk한 것으로 판단함
+                if is_risky == 'N' or is_risky_crop == 'N':
                     risk_section.append(frame_count)
                     logger.info(f">>>>>>>>>>>>> Frame Count: {frame_count}, Risk Section: {risk_section}")
-                elif is_risky == 'P' and len(risk_section) != 0:
+                elif (is_risky == 'P' or is_risky_crop == 'P') and len(risk_section) != 0:
                     detect_risky_section(conn, video_id, risk_section)
                     risk_section.clear()
                 x_vector.clear()
@@ -188,13 +208,11 @@ def generateCaption(video_path):
     cap.release()
 
 
-def parse_caption(conn, video_id, frame_num, original_data_caption, crop_data_caption, is_risky):
-    if crop_data_caption is None:
-        crop_data_caption = ''
+def parse_caption(conn, video_id, frame_num, caption, sentiment_score, is_risky):
     try:
         with conn.cursor() as cursor:
-            sql = f"INSERT INTO `{CAPTION_TABLE}` (`video_id`, `frame_number`, `original_sentence`, `cropped_sentence`, `created_at`, `sentiment_result`) VALUES (%s, %s, %s, %s, NOW(), %s)"
-            cursor.execute(sql, (video_id, frame_num, original_data_caption, crop_data_caption, is_risky))
+            sql = f"INSERT INTO `{CAPTION_TABLE}` (`video_id`, `frame_number`, `sentence`, `sentiment_score`, `sentiment_result`, `created_at`) VALUES (%s, %s, %s, %s, %s, NOW())"
+            cursor.execute(sql, (video_id, frame_num, caption, sentiment_score, is_risky))
             conn.commit()
     except Exception as e:
         logger.error(e)
