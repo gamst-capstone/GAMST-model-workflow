@@ -108,6 +108,7 @@ def generateCaption(video_path):
     length = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     fps = cap.get(cv2.CAP_PROP_FPS)
     logger.info(f"[*] Video Length: {length}, FPS: {fps}")
+    risk_section = []
     
     try:
         logger.info("[*] Connecting to DB...")
@@ -130,7 +131,6 @@ def generateCaption(video_path):
                 break
 
             if frame_count % 10 == 0:
-                risk_section = []
                 crop_data_caption = None
                 pil_raw_image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
                 # raw_input = processor(pil_raw_image, return_tensors="pt")
@@ -196,7 +196,7 @@ def generateCaption(video_path):
                     risk_section.append(frame_count)
                     logger.info(f">>>>>>>>>>>>> Frame Count: {frame_count}, Risk Section: {risk_section}")
                 elif (is_risky == 'P' or is_risky_crop == 'P') and len(risk_section) != 0:
-                    detect_risky_section(conn, video_id, risk_section)
+                    detect_risky_section(conn, video_uid, video_id, risk_section)
                     risk_section.clear()
                 x_vector.clear()
                 y_vector.clear()
@@ -204,7 +204,7 @@ def generateCaption(video_path):
             frame_count += 1
         # video 처리 끝나고 남아있는 risk_section 처리
         if risk_section:
-            detect_risky_section(conn, video_id, risk_section)
+            detect_risky_section(conn, video_uid, video_id, risk_section)
     cap.release()
 
 
@@ -238,13 +238,13 @@ def generate_sentimental_score(caption_sentence):
     return predictions[0].tolist()
 
 
-def detect_risky_section(conn, video_id, prev_result):
+def detect_risky_section(conn, video_uid, video_id, prev_result):
     try:
         start_frame = prev_result[0]
         end_frame = prev_result[-1]
         with conn.cursor() as cursor:
-            sql = f"INSERT INTO `{RISK_TABLE}` (`video_id`, `start_frame`, `end_frame`, `created_at`) VALUES (%s, %s, %s, NOW())"
-            cursor.execute(sql, (video_id, start_frame, end_frame))
+            sql = f"INSERT INTO `{RISK_TABLE}` (`video_id`, `video_uid`, `start_frame`, `end_frame`, `created_at`) VALUES (%s, %s, %s, %s, NOW())"
+            cursor.execute(sql, (video_id, video_uid, start_frame, end_frame))
             conn.commit()
         logger.info(f"[!] Found Risky Section: {start_frame} ~ {end_frame}")
     except Exception as e:
