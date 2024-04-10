@@ -174,6 +174,7 @@ def generateCaption(video_path):
                 # RISK 구간 판별
                 if is_risky == 'N':
                     risk_section.append(frame_count)
+                    logger.info(f">>>>>>>>>>>>> Frame Count: {frame_count}, Risk Section: {risk_section}")
                 elif is_risky == 'P' and len(risk_section) != 0:
                     detect_risky_section(conn, video_id, risk_section)
                     risk_section.clear()
@@ -190,16 +191,15 @@ def generateCaption(video_path):
 def parse_caption(conn, video_id, frame_num, original_data_caption, crop_data_caption, is_risky):
     if crop_data_caption is None:
         crop_data_caption = ''
-    else:
-        try:
-            with conn.cursor() as cursor:
-                sql = f"INSERT INTO `{CAPTION_TABLE}` (`video_id`, `frame_number`, `original_sentence`, `cropped_sentence`, `created_at`, `sentiment_result`) VALUES (%s, %s, %s, %s, NOW(), %s)"
-                cursor.execute(sql, (video_id, frame_num, original_data_caption, crop_data_caption, is_risky))
-                conn.commit()
-        except Exception as e:
-            logger.error(e)
-            return
-        
+    try:
+        with conn.cursor() as cursor:
+            sql = f"INSERT INTO `{CAPTION_TABLE}` (`video_id`, `frame_number`, `original_sentence`, `cropped_sentence`, `created_at`, `sentiment_result`) VALUES (%s, %s, %s, %s, NOW(), %s)"
+            cursor.execute(sql, (video_id, frame_num, original_data_caption, crop_data_caption, is_risky))
+            conn.commit()
+    except Exception as e:
+        logger.error(e)
+        return
+    
 
 def generate_sentimental_score(caption_sentence):
     # 입력 데이터를 모델이 이해할 수 있는 형태로 전처리
