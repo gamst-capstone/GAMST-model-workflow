@@ -94,30 +94,39 @@ def loadSentimentalModel():
 
 # input: VideoPath // output: (10프레임당 Crop된 image Caption 문장 + Original Image Caption 문장)
 # if Detection Model에서 Person이 안잡힐 경우 --> Crop된 image Caption 문장: None
-def generateCaption(video_path):
+def generateCaption(input_object):
     x_vector = []
     y_vector = []
     names = yolo_model.names
 
+    video_path = input_object.get('url')
+    input_type = input_object.get('type')
+
     logger.info("[*] Loading Video File...")    
-    # video_path = HTTP URL from s3 bucket object
+    # video_path = HTTP URL from s3 bucket object OR Camera URL 
     cap = cv2.VideoCapture(video_path)
     frame_count = 0
 
-    video_uid = video_path.split('/')[-1]
-    length = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    logger.info(f"[*] Video Length: {length}, FPS: {fps}")
+    if input_type == 'video':
+        video_uid = input_object.get('info').get('video_uid')
+        length = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        logger.info(f"[*] Video Length: {length}, FPS: {fps}")
+    elif input_type == 'stream':
+        start_time = input_object.get('info').get('start_time')
+        logger.info(f"[*] Start Time: {start_time}")
     risk_section = []
     
     try:
         logger.info("[*] Connecting to DB...")
         conn = db_conn()
 
-        video_id = video_id_check(conn, video_uid)
-        if not video_id:
-            logger.error("[*] Video ID not found")
-            return
+        if input_type == 'video':
+            logger.info("[*] Checking Video ID...")
+            video_id = video_id_check(conn, video_uid)
+            if not video_id:
+                logger.error("[*] Video ID not found")
+                return
     except Exception as e:
         logger.error(e)
         return
@@ -212,7 +221,7 @@ def parse_caption(conn, video_id, frame_num, caption, sentiment_score, is_risky)
     try:
         with conn.cursor() as cursor:
             sql = f"INSERT INTO `{CAPTION_TABLE}` (`video_id`, `frame_number`, `sentence`, `sentiment_score`, `sentiment_result`, `created_at`) VALUES (%s, %s, %s, %s, %s, NOW())"
-            cursor.execute(sql, (video_id, frame_num, caption, sentiment_score, is_risky))
+            cursor.execute(sql, (video_id, frame_num, caption, format(sentiment_score, '.10f'), is_risky))
             conn.commit()
     except Exception as e:
         logger.error(e)

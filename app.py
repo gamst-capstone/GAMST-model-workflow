@@ -63,6 +63,41 @@ def receive_message():
     else:
         return make_response(json.dumps(ret_msg), 400)
 
+
+@app.route('/start_stream', methods=['POST'])
+def start_stream():
+    '''
+    Parameter:
+        camera_url: string
+        start_time: string
+    Return:
+        result: string[success, fail]
+    '''
+    data = request.get_json()
+    camera_url = data.get('camera_url')
+    start_time = data.get('start_time')
+
+    try:
+        thread.set()
+        stream_thread = threading.Thread(target=stream_process, args=(camera_url, start_time))
+        stream_thread.start()
+
+        return make_response(json.dumps({'result': 'success'}), 200)
+    except Exception as e:
+        logger.error(e)
+        return make_response(json.dumps({'result': 'fail', 'msg': str(e)}), 400)
+
+def stream_process(camera_url, start_time):
+    input_object = {
+        'type': 'stream',
+        'url': camera_url,
+        'infos': {
+            'start_time': start_time,
+        }
+    }
+    generateCaption(input_object)
+    logger.info("[*] Model Working")
+
 def msg_process(msg, timestamp):
     try:
         # process SNS message
@@ -76,9 +111,16 @@ def msg_process(msg, timestamp):
             video_url = f"https://{bucket_name}.s3.amazonaws.com/{object_name}"
             logger.info(f"Video URL : {video_url}")
 
-            # asyncio.create_task(generateCaption(video_url))
-            generateCaption(video_url)
-            logger.info("model working")
+            input_object = {
+                'type': 'video',
+                'url': video_url,
+                'info': {
+                    'video_uid': video_url.split('/')[-1],
+                }
+            }
+
+            generateCaption(input_object)
+            logger.info("[*] model working")
     except Exception as e:
         logger.error(e)
         pass
