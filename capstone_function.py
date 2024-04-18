@@ -4,6 +4,7 @@ from PIL import Image
 from transformers import BlipProcessor, BlipForConditionalGeneration, AutoTokenizer, AutoModelForSequenceClassification
 from tqdm import tqdm
 from dotenv import load_dotenv
+from datetime import datetime
 
 import cv2
 import pymysql
@@ -123,8 +124,8 @@ def generateCaption(input_object):
                 return
         elif input_type == 'stream':
             logger.info("[*] Checking Camera ID...")
-            camera_id = camera_id_check(conn, camera_id, video_path)
-            if not camera_id:
+            video_id = camera_id_check(conn, camera_id, video_path)
+            if not video_id:
                 logger.error("[*] Camera ID not found")
                 return
     except Exception as e:
@@ -135,6 +136,7 @@ def generateCaption(input_object):
     with tqdm(total=length) as pbar:
         while cap.isOpened():
             ret, frame = cap.read()
+            frame_time = str(datetime.now())
 
             if not ret:
                 break
@@ -158,7 +160,10 @@ def generateCaption(input_object):
                 is_risky_crop = None
 
                 # 추출된 Caption Sentence를 DB에 저장하는 함수 호출
-                parse_caption(conn, video_id, frame_count, original_data_caption, predicted_risk[1], is_risky)
+                if input_type == 'video':
+                    parse_caption(conn, video_id, frame_count, original_data_caption, predicted_risk[1], is_risky)
+                elif input_type == 'stream':
+                    stream_parse_caption(conn, camera_id, frame_time, original_data_caption, predicted_risk[1], is_risky)
 
                 # YOLO model detection
                 results = yolo_model(frame)
@@ -198,15 +203,26 @@ def generateCaption(input_object):
                     is_risky_crop = 'N' if predicted_risk_crop[1] >= SENTIMENTAL_THRESHOLD else 'P'
 
                     # Crop된 이미지에서 추출된 Caption Sentence를 DB에 저장하는 함수 호출
-                    parse_caption(conn, video_id, frame_count, crop_data_caption, predicted_risk_crop[1], is_risky_crop)
-                
+                    if input_type == 'video':
+                        parse_caption(conn, video_id, frame_count, crop_data_caption, predicted_risk_crop[1], is_risky_crop)
+                    elif input_type == 'stream':
+                        stream_parse_caption(conn, camera_id, frame_time, crop_data_caption, predicted_risk_crop[1], is_risky_crop)
+
                 # RISK 구간 판별 -> 각 프레임에서 추출된 문장들 중 하나라도 risk가 존재하면, 해당 프레임은 risk한 것으로 판단함
-                if is_risky == 'N' or is_risky_crop == 'N':
-                    risk_section.append(frame_count)
-                    logger.info(f">>>>>>>>>>>>> Frame Count: {frame_count}, Risk Section: {risk_section}")
-                elif (is_risky == 'P' or is_risky_crop == 'P') and len(risk_section) != 0:
-                    detect_risky_section(conn, video_uid, video_id, risk_section)
-                    risk_section.clear()
+                if input_type == 'video':
+                    if is_risky == 'N' or is_risky_crop == 'N':
+                        risk_section.append(frame_count)
+                        logger.info(f">>>>>>>>>>>>> Frame Count: {frame_count}, Risk Section: {risk_section}")
+                    elif (is_risky == 'P' or is_risky_crop == 'P') and len(risk_section) != 0:
+                        detect_risky_section(conn, video_uid, video_id, risk_section)
+                        risk_section.clear()
+                elif input_type == 'stream':
+                    if is_risky == 'N' or is_risky_crop == 'N':
+                        risk_section.append(frame_time)
+                        logger.info(f">>>>>>>>>>>>> Frame Time: {frame_time}, Risk Section: {risk_section}")
+                    elif (is_risky == 'P' or is_risky_crop == 'P') and len(risk_section) != 0:
+                        detect_risky_section(conn, camera_id, video_id, risk_section)
+                        risk_section.clear()
                 x_vector.clear()
                 y_vector.clear()
             pbar.update(1)
@@ -227,6 +243,16 @@ def parse_caption(conn, video_id, frame_num, caption, sentiment_score, is_risky)
         logger.error(e)
         return
     
+def stream_parse_caption(conn, camera_id, frame_time, caption, sentiment_score, is_risky):
+    try:
+        logger.info(f"[STREAM] Frame Time : {frame_time}")
+        with conn.cursor() as cursor:
+            sql = f"INSERT INTO `camera_caption` (`camera_id`, `sentence`, `sentiment_score`, `sentiment_result`, `created_at`) VALUES (%s, %s, %s, %s, NOW())"
+            cursor.execute(sql, (camera_id, caption, format(sentiment_score, '.10f'), is_risky))
+            conn.commit()
+    except Exception as e:
+        logger.error(e)
+        return
 
 def generate_sentimental_score(caption_sentence):
     # 입력 데이터를 모델이 이해할 수 있는 형태로 전처리
@@ -254,6 +280,19 @@ def detect_risky_section(conn, video_uid, video_id, prev_result):
         with conn.cursor() as cursor:
             sql = f"INSERT INTO `{RISK_TABLE}` (`video_id`, `video_uid`, `start_frame`, `end_frame`, `created_at`) VALUES (%s, %s, %s, %s, NOW())"
             cursor.execute(sql, (video_id, video_uid, start_frame, end_frame))
+            conn.commit()
+        logger.info(f"[!] Found Risky Section: {start_frame} ~ {end_frame}")
+    except Exception as e:
+        logger.error(e)
+        return
+    
+def detect_risky_section_stream(conn, camera_id, prev_result):
+    try:
+        start_frame = prev_result[0]
+        end_frame = prev_result[-1]
+        with conn.cursor() as cursor:
+            sql = f"INSERT INTO `camera_riskysection` (`camera_id`, `start_frame`, `end_frame`, `created_at`) VALUES (%s, %s, %s, NOW())"
+            cursor.execute(sql, (camera_id, start_frame, end_frame))
             conn.commit()
         logger.info(f"[!] Found Risky Section: {start_frame} ~ {end_frame}")
     except Exception as e:

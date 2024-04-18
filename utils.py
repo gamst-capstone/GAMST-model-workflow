@@ -14,6 +14,6 @@ def camera_id_check(conn, camera_id, camera_url):
         sql = f"SELECT id FROM camera_camera WHERE stream_url LIKE %s"
         cursor.execute(sql, (camera_url,))
         res = cursor.fetchone()[0]
-        if not res or res != camera_id:
+        if not res or (res != int(camera_id)):
             return []
         return camera_id

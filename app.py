@@ -65,7 +65,7 @@ def receive_message():
         return make_response(json.dumps(ret_msg), 400)
 
 
-@app.route('/start_stream', methods=['POST'])
+@app.route('/start-stream', methods=['POST'])
 def start_stream():
     '''
     Parameter:
