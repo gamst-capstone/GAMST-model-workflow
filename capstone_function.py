@@ -221,7 +221,7 @@ def generateCaption(input_object):
                         risk_section.append(frame_time)
                         logger.info(f">>>>>>>>>>>>> Frame Time: {frame_time}, Risk Section: {risk_section}")
                     elif (is_risky == 'P' or is_risky_crop == 'P') and len(risk_section) != 0:
-                        detect_risky_section(conn, camera_id, video_id, risk_section)
+                        detect_risky_section_stream(conn, camera_id, risk_section)
                         risk_section.clear()
                 x_vector.clear()
                 y_vector.clear()
@@ -229,7 +229,10 @@ def generateCaption(input_object):
             frame_count += 1
         # video 처리 끝나고 남아있는 risk_section 처리
         if risk_section:
-            detect_risky_section(conn, video_uid, video_id, risk_section)
+            if input_type == 'video':
+                detect_risky_section(conn, video_uid, video_id, risk_section)
+            elif input_type == 'stream':
+                detect_risky_section_stream(conn, camera_id, risk_section)
     cap.release()
 
 
@@ -288,13 +291,13 @@ def detect_risky_section(conn, video_uid, video_id, prev_result):
     
 def detect_risky_section_stream(conn, camera_id, prev_result):
     try:
-        start_frame = prev_result[0]
-        end_frame = prev_result[-1]
+        start_time = prev_result[0]
+        end_time = prev_result[-1]
         with conn.cursor() as cursor:
-            sql = f"INSERT INTO `camera_riskysection` (`camera_id`, `start_frame`, `end_frame`, `created_at`) VALUES (%s, %s, %s, NOW())"
-            cursor.execute(sql, (camera_id, start_frame, end_frame))
+            sql = f"INSERT INTO `camera_riskysection` (`camera_id`, `start_time`, `end_time`, `created_at`) VALUES (%s, %s, %s, NOW())"
+            cursor.execute(sql, (camera_id, start_time, end_time))
             conn.commit()
-        logger.info(f"[!] Found Risky Section: {start_frame} ~ {end_frame}")
+        logger.info(f"[!] Found Risky Section: {start_time} ~ {end_time}")
     except Exception as e:
         logger.error(e)
         return
