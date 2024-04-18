@@ -1,5 +1,6 @@
 from flask import Flask, request, make_response
 from dotenv import load_dotenv
+from datetime import datetime
 import json
 import requests
 import boto3
@@ -68,18 +69,25 @@ def receive_message():
 def start_stream():
     '''
     Parameter:
-        camera_url: string
-        start_time: string
+        {
+            camera_id: int
+            camera_name: string
+            camera_url: string
+            start_time: string
+        }
     Return:
-        result: string[success, fail]
+        {
+            result: string[success, fail]
+        }
     '''
     data = request.get_json()
-    camera_url = data.get('camera_url')
-    start_time = data.get('start_time')
+
+    start_time = str(datetime.now())
+    data['start_time'] = start_time
 
     try:
         thread.set()
-        stream_thread = threading.Thread(target=stream_process, args=(camera_url, start_time))
+        stream_thread = threading.Thread(target=stream_process, args=(data,))
         stream_thread.start()
 
         return make_response(json.dumps({'result': 'success'}), 200)
@@ -87,13 +95,12 @@ def start_stream():
         logger.error(e)
         return make_response(json.dumps({'result': 'fail', 'msg': str(e)}), 400)
 
-def stream_process(camera_url, start_time):
+def stream_process(data):
     input_object = {
         'type': 'stream',
-        'url': camera_url,
-        'infos': {
-            'start_time': start_time,
-        }
+        'id' : data.get('camera_id'),
+        'url': data.get('camera_url'),
+        'start_time': data.get('start_time'),
     }
     generateCaption(input_object)
     logger.info("[*] Model Working")
@@ -114,9 +121,7 @@ def msg_process(msg, timestamp):
             input_object = {
                 'type': 'video',
                 'url': video_url,
-                'info': {
-                    'video_uid': video_url.split('/')[-1],
-                }
+                'video_uid': video_url.split('/')[-1],
             }
 
             generateCaption(input_object)

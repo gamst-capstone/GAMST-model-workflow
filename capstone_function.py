@@ -10,6 +10,9 @@ import pymysql
 import os, logging
 import torch
 
+from utils import video_id_check, camera_id_check
+
+
 logger = logging.getLogger()
 logging.basicConfig(level=logging.INFO)
 
@@ -54,17 +57,6 @@ def db_conn():
         logger.error(e)
         return 
 
-
-def video_id_check(conn, video_uid):
-    with conn.cursor() as cursor:
-        sql = f"SELECT id FROM video_video WHERE url LIKE %s"
-        cursor.execute(sql, ('%' + video_uid + '%',))
-        video_id = cursor.fetchone()[0]
-        logger.info(f"[!] Found video_id : {video_id}")
-        if not video_id:
-            return []
-        return video_id
-
 # Captioning Model 로드하는 함수
 def loadCaptionModel():
     # BLIP Model Load
@@ -108,12 +100,14 @@ def generateCaption(input_object):
     frame_count = 0
 
     if input_type == 'video':
-        video_uid = input_object.get('info').get('video_uid')
+        video_uid = input_object.get('video_uid')
         length = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         fps = cap.get(cv2.CAP_PROP_FPS)
         logger.info(f"[*] Video Length: {length}, FPS: {fps}")
     elif input_type == 'stream':
-        start_time = input_object.get('info').get('start_time')
+        camera_id = input_object.get('id')
+        start_time = input_object.get('start_time')
+        length = 0
         logger.info(f"[*] Start Time: {start_time}")
     risk_section = []
     
@@ -126,6 +120,12 @@ def generateCaption(input_object):
             video_id = video_id_check(conn, video_uid)
             if not video_id:
                 logger.error("[*] Video ID not found")
+                return
+        elif input_type == 'stream':
+            logger.info("[*] Checking Camera ID...")
+            camera_id = camera_id_check(conn, camera_id, video_path)
+            if not camera_id:
+                logger.error("[*] Camera ID not found")
                 return
     except Exception as e:
         logger.error(e)
