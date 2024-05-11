@@ -11,7 +11,7 @@ import pymysql
 import os, logging
 import torch
 
-from utils import video_id_check, camera_id_check
+from utils import video_id_check, camera_id_check, upload_to_s3
 
 
 logger = logging.getLogger()
@@ -25,6 +25,7 @@ DB_PASSWORD = os.getenv("DB_PASSWORD","")
 SENTIMENTAL_PATH= os.getenv("SENTIMENTAL_PATH", "")
 CAPTION_TABLE = os.getenv("CAPTION_TABLE", "video_caption")
 RISK_TABLE = os.getenv("RISK_TABLE", "video_riskysection")
+VIDEO_BUCKET = os.getenv("VIDEO_BUCKET", "")
 
 processor = None
 blip_model = None
@@ -98,7 +99,11 @@ def generateCaption(input_object):
     logger.info("[*] Loading Video File...")    
     # video_path = HTTP URL from s3 bucket object OR Camera URL 
     cap = cv2.VideoCapture(video_path)
+    out = None
     frame_count = 0
+    risk_section = []
+    is_N = False
+    start_time = 0
 
     if input_type == 'video':
         video_uid = input_object.get('video_uid')
@@ -110,7 +115,7 @@ def generateCaption(input_object):
         start_time = input_object.get('start_time')
         length = 0
         logger.info(f"[*] Start Time: {start_time}")
-    risk_section = []
+    
     
     try:
         logger.info("[*] Connecting to DB...")
@@ -136,7 +141,7 @@ def generateCaption(input_object):
     with tqdm(total=length) as pbar:
         while cap.isOpened():
             ret, frame = cap.read()
-            frame_time = str(datetime.now())
+            frame_time = datetime.now()
 
             if not ret:
                 break
@@ -217,22 +222,53 @@ def generateCaption(input_object):
                         detect_risky_section(conn, video_uid, video_id, risk_section)
                         risk_section.clear()
                 elif input_type == 'stream':
+                    # if is_risky == 'N' or is_risky_crop == 'N':
+                    #     risk_section.append(frame_time)
+                    #     logger.info(f">>>>>>>>>>>>> Frame Time: {frame_time}, Risk Section: {risk_section}")
+                    # elif (is_risky == 'P' or is_risky_crop == 'P') and len(risk_section) != 0:
+                    #     detect_risky_section_stream(conn, camera_id, risk_section)
+                    #     risk_section.clear()
                     if is_risky == 'N' or is_risky_crop == 'N':
-                        risk_section.append(frame_time)
-                        logger.info(f">>>>>>>>>>>>> Frame Time: {frame_time}, Risk Section: {risk_section}")
-                    elif (is_risky == 'P' or is_risky_crop == 'P') and len(risk_section) != 0:
-                        detect_risky_section_stream(conn, camera_id, risk_section)
-                        risk_section.clear()
+                        start_time = frame_time
+
+                        # frame write here
+                        # TODO : file save path 
+                        if out is None:
+                            filename = f"output_{start_time.strftime('%y%m%d%H%M%S')}.avi"
+                            out = cv2.VideoWriter(filename ,cv2.VideoWriter_fourcc(*'XVID'), 20, (640,480))
+                        out.write(frame)
+                
+                        if is_N == False:
+                            is_N = True
+                    elif is_risky == 'P' and is_risky_crop == 'P':
+                        if is_N == True:
+                            # frame write here
+                            out.write(frame)
+
+                            if (frame_time - start_time).seconds > 10:
+                                risk_section = [start_time, frame_time]
+                                print(f"RISK SECTION: {risk_section}")
+
+
+                                # risk section video 추출
+                                out.release()
+                                res = upload_to_s3(VIDEO_BUCKET, filename)
+                                if res.get('status'):
+                                    logger.info(f"[V] Clip URL : {res.get('file_url')}")
+                                    detect_risky_section_stream(conn, camera_id, risk_section, res.get('file_url'))
+                                out = None
+                                is_N = False
+                                start_time = 0
                 x_vector.clear()
                 y_vector.clear()
             pbar.update(1)
             frame_count += 1
         # video 처리 끝나고 남아있는 risk_section 처리
-        if risk_section:
-            if input_type == 'video':
-                detect_risky_section(conn, video_uid, video_id, risk_section)
-            elif input_type == 'stream':
-                detect_risky_section_stream(conn, camera_id, risk_section)
+        # if risk_section:
+        #     if input_type == 'video':
+        #         detect_risky_section(conn, video_uid, video_id, risk_section)
+        #     elif input_type == 'stream':
+        #         detect_risky_section_stream(conn, camera_id, risk_section)
     cap.release()
 
 
@@ -248,7 +284,7 @@ def parse_caption(conn, video_id, frame_num, caption, sentiment_score, is_risky)
     
 def stream_parse_caption(conn, camera_id, frame_time, caption, sentiment_score, is_risky):
     try:
-        logger.info(f"[STREAM] Frame Time : {frame_time}")
+        logger.info(f"[STREAM] Frame Time : {str(frame_time)}")
         with conn.cursor() as cursor:
             sql = f"INSERT INTO `camera_caption` (`camera_id`, `sentence`, `sentiment_score`, `sentiment_result`, `created_at`) VALUES (%s, %s, %s, %s, NOW())"
             cursor.execute(sql, (camera_id, caption, format(sentiment_score, '.10f'), is_risky))
@@ -276,10 +312,10 @@ def generate_sentimental_score(caption_sentence):
     return predictions[0].tolist()
 
 
-def detect_risky_section(conn, video_uid, video_id, prev_result):
+def detect_risky_section(conn, video_uid, video_id, risk_section):
     try:
-        start_frame = prev_result[0]
-        end_frame = prev_result[-1]
+        start_frame = risk_section[0]
+        end_frame = risk_section[-1]
         with conn.cursor() as cursor:
             sql = f"INSERT INTO `{RISK_TABLE}` (`video_id`, `video_uid`, `start_frame`, `end_frame`, `created_at`) VALUES (%s, %s, %s, %s, NOW())"
             cursor.execute(sql, (video_id, video_uid, start_frame, end_frame))
@@ -289,13 +325,13 @@ def detect_risky_section(conn, video_uid, video_id, prev_result):
         logger.error(e)
         return
     
-def detect_risky_section_stream(conn, camera_id, prev_result):
+def detect_risky_section_stream(conn, camera_id, risk_section, clip_url):
     try:
-        start_time = prev_result[0]
-        end_time = prev_result[-1]
+        start_time = str(risk_section[0])
+        end_time = str(risk_section[-1])
         with conn.cursor() as cursor:
-            sql = f"INSERT INTO `camera_riskysection` (`camera_id`, `start_time`, `end_time`, `created_at`) VALUES (%s, %s, %s, NOW())"
-            cursor.execute(sql, (camera_id, start_time, end_time))
+            sql = f"INSERT INTO `camera_riskysection` (`camera_id`, `video_uid`, `section_video_url`, `start_time`, `end_time`, `created_at`) VALUES (%s, %s, %s, %s, %s, NOW())"
+            cursor.execute(sql, (camera_id, risk_section[0].strftime('%y%m%d%H%M%S'), clip_url, start_time, end_time))
             conn.commit()
         logger.info(f"[!] Found Risky Section: {start_time} ~ {end_time}")
     except Exception as e:
