@@ -114,7 +114,8 @@ def generateCaption(input_object):
         camera_id = input_object.get('id')
         start_time = input_object.get('start_time')
         length = 0
-        logger.info(f"[*] Start Time: {start_time}")
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        logger.info(f"[*] Start Time: {start_time}, FPS : {fps}")
     
     
     try:
@@ -213,52 +214,52 @@ def generateCaption(input_object):
                     elif input_type == 'stream':
                         stream_parse_caption(conn, camera_id, frame_time, crop_data_caption, predicted_risk_crop[1], is_risky_crop)
 
-                # RISK 구간 판별 -> 각 프레임에서 추출된 문장들 중 하나라도 risk가 존재하면, 해당 프레임은 risk한 것으로 판단함
-                if input_type == 'video':
-                    if is_risky == 'N' or is_risky_crop == 'N':
-                        risk_section.append(frame_count)
-                        logger.info(f">>>>>>>>>>>>> Frame Count: {frame_count}, Risk Section: {risk_section}")
-                    elif (is_risky == 'P' or is_risky_crop == 'P') and len(risk_section) != 0:
-                        detect_risky_section(conn, video_uid, video_id, risk_section)
-                        risk_section.clear()
-                elif input_type == 'stream':
-                    # if is_risky == 'N' or is_risky_crop == 'N':
-                    #     risk_section.append(frame_time)
-                    #     logger.info(f">>>>>>>>>>>>> Frame Time: {frame_time}, Risk Section: {risk_section}")
-                    # elif (is_risky == 'P' or is_risky_crop == 'P') and len(risk_section) != 0:
-                    #     detect_risky_section_stream(conn, camera_id, risk_section)
-                    #     risk_section.clear()
-                    if is_risky == 'N' or is_risky_crop == 'N':
-                        start_time = frame_time
+            # RISK 구간 판별 -> 각 프레임에서 추출된 문장들 중 하나라도 risk가 존재하면, 해당 프레임은 risk한 것으로 판단함
+            if input_type == 'video':
+                if is_risky == 'N' or is_risky_crop == 'N':
+                    risk_section.append(frame_count)
+                    logger.info(f">>>>>>>>>>>>> Frame Count: {frame_count}, Risk Section: {risk_section}")
+                elif (is_risky == 'P' or is_risky_crop == 'P') and len(risk_section) != 0:
+                    detect_risky_section(conn, video_uid, video_id, risk_section)
+                    risk_section.clear()
+            elif input_type == 'stream':
+                # if is_risky == 'N' or is_risky_crop == 'N':
+                #     risk_section.append(frame_time)
+                #     logger.info(f">>>>>>>>>>>>> Frame Time: {frame_time}, Risk Section: {risk_section}")
+                # elif (is_risky == 'P' or is_risky_crop == 'P') and len(risk_section) != 0:
+                #     detect_risky_section_stream(conn, camera_id, risk_section)
+                #     risk_section.clear()
+                if is_risky == 'N' or is_risky_crop == 'N':
+                    start_time = frame_time
 
+                    # frame write here
+                    # TODO : file save path 
+                    if out is None:
+                        filename = f"output_{start_time.strftime('%y%m%d%H%M%S')}.mp4"
+                        out = cv2.VideoWriter(filename ,cv2.VideoWriter_fourcc(*'mp4v'), fps, (640,480))
+                    out.write(frame)
+            
+                    if is_N == False:
+                        is_N = True
+                elif is_risky == 'P' and is_risky_crop == 'P':
+                    if is_N == True:
                         # frame write here
-                        # TODO : file save path 
-                        if out is None:
-                            filename = f"output_{start_time.strftime('%y%m%d%H%M%S')}.avi"
-                            out = cv2.VideoWriter(filename ,cv2.VideoWriter_fourcc(*'XVID'), 20, (640,480))
                         out.write(frame)
-                
-                        if is_N == False:
-                            is_N = True
-                    elif is_risky == 'P' and is_risky_crop == 'P':
-                        if is_N == True:
-                            # frame write here
-                            out.write(frame)
 
-                            if (frame_time - start_time).seconds > 10:
-                                risk_section = [start_time, frame_time]
-                                print(f"RISK SECTION: {risk_section}")
+                        if (frame_time - start_time).seconds > 10:
+                            risk_section = [start_time, frame_time]
+                            print(f"RISK SECTION: {risk_section}")
 
 
-                                # risk section video 추출
-                                out.release()
-                                res = upload_to_s3(VIDEO_BUCKET, filename)
-                                if res.get('status'):
-                                    logger.info(f"[V] Clip URL : {res.get('file_url')}")
-                                    detect_risky_section_stream(conn, camera_id, risk_section, res.get('file_url'))
-                                out = None
-                                is_N = False
-                                start_time = 0
+                            # risk section video 추출
+                            out.release()
+                            res = upload_to_s3(VIDEO_BUCKET, filename)
+                            if res.get('status'):
+                                logger.info(f"[V] Clip URL : {res.get('file_url')}")
+                                detect_risky_section_stream(conn, camera_id, risk_section, res.get('file_url'))
+                            out = None
+                            is_N = False
+                            start_time = 0
                 x_vector.clear()
                 y_vector.clear()
             pbar.update(1)
