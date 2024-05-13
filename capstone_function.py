@@ -36,6 +36,9 @@ sentimental_tokenizer = None
 # 추출 frame 단위
 FRAME_CUTOFF = 10
 
+# RISK Clip 최소시간, second
+CLIP_TIME = 10
+
 # Sentimental score threshold (부정값)
 SENTIMENTAL_THRESHOLD = 0.85
 
@@ -109,6 +112,7 @@ def generateCaption(input_object):
         video_uid = input_object.get('video_uid')
         length = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         fps = cap.get(cv2.CAP_PROP_FPS)
+        video_clip_num = 0
         logger.info(f"[*] Video Length: {length}, FPS: {fps}")
     elif input_type == 'stream':
         camera_id = input_object.get('id')
@@ -130,8 +134,8 @@ def generateCaption(input_object):
                 return
         elif input_type == 'stream':
             logger.info("[*] Checking Camera ID...")
-            video_id = camera_id_check(conn, camera_id, video_path)
-            if not video_id:
+            camera_id = camera_id_check(conn, camera_id, video_path)
+            if not camera_id:
                 logger.error("[*] Camera ID not found")
                 return
     except Exception as e:
@@ -147,7 +151,7 @@ def generateCaption(input_object):
             if not ret:
                 break
 
-            if frame_count % 10 == 0:
+            if frame_count % FRAME_CUTOFF == 0:
                 crop_data_caption = None
                 pil_raw_image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
                 # raw_input = processor(pil_raw_image, return_tensors="pt")
@@ -172,7 +176,7 @@ def generateCaption(input_object):
                     stream_parse_caption(conn, camera_id, frame_time, original_data_caption, predicted_risk[1], is_risky)
 
                 # YOLO model detection
-                results = yolo_model(frame)
+                results = yolo_model(frame, verbose=False)
                 boxes = results[0].boxes
                 for box in boxes:
                     frame_boxes = box.xyxy.cpu().detach().numpy().tolist()
@@ -215,28 +219,17 @@ def generateCaption(input_object):
                         stream_parse_caption(conn, camera_id, frame_time, crop_data_caption, predicted_risk_crop[1], is_risky_crop)
 
             # RISK 구간 판별 -> 각 프레임에서 추출된 문장들 중 하나라도 risk가 존재하면, 해당 프레임은 risk한 것으로 판단함
+            # Video input logic
             if input_type == 'video':
                 if is_risky == 'N' or is_risky_crop == 'N':
-                    risk_section.append(frame_count)
-                    logger.info(f">>>>>>>>>>>>> Frame Count: {frame_count}, Risk Section: {risk_section}")
-                elif (is_risky == 'P' or is_risky_crop == 'P') and len(risk_section) != 0:
-                    detect_risky_section(conn, video_uid, video_id, risk_section)
-                    risk_section.clear()
-            elif input_type == 'stream':
-                # if is_risky == 'N' or is_risky_crop == 'N':
-                #     risk_section.append(frame_time)
-                #     logger.info(f">>>>>>>>>>>>> Frame Time: {frame_time}, Risk Section: {risk_section}")
-                # elif (is_risky == 'P' or is_risky_crop == 'P') and len(risk_section) != 0:
-                #     detect_risky_section_stream(conn, camera_id, risk_section)
-                #     risk_section.clear()
-                if is_risky == 'N' or is_risky_crop == 'N':
+                    start_frame = frame_count
                     start_time = frame_time
 
                     # frame write here
                     # TODO : file save path 
                     if out is None:
-                        filename = f"output_{start_time.strftime('%y%m%d%H%M%S')}.mp4"
-                        out = cv2.VideoWriter(filename ,cv2.VideoWriter_fourcc(*'mp4v'), fps, (640,480))
+                        filename = f"output_video_{video_uid}_{video_clip_num}.mp4"
+                        out = cv2.VideoWriter(filename ,cv2.VideoWriter_fourcc(*'mp4v'), fps, (int(cap.get(3)), int(cap.get(4))))
                     out.write(frame)
             
                     if is_N == False:
@@ -246,7 +239,43 @@ def generateCaption(input_object):
                         # frame write here
                         out.write(frame)
 
-                        if (frame_time - start_time).seconds > 10:
+                        if (frame_time - start_time).seconds > CLIP_TIME:
+                            risk_section = [start_frame, frame_count]
+                            print(f"RISK SECTION: {risk_section}")
+
+
+                            # risk section video 추출
+                            out.release()
+                            res = upload_to_s3(VIDEO_BUCKET, filename)
+                            if res.get('status'):
+                                logger.info(f"[V] Clip URL : {res.get('file_url')}")
+                                detect_risky_section(conn, video_uid, video_id, risk_section, res.get('file_url'))
+                                video_clip_num += 1
+                            out = None
+                            is_N = False
+                            start_frame = 0
+
+            # Camera Stream input logic
+            elif input_type == 'stream':
+                if is_risky == 'N' or is_risky_crop == 'N':
+                    start_time = frame_time
+
+                    # frame write here
+                    # TODO : file save path 
+                    if out is None:
+                        filename = f"output_{start_time.strftime('%y%m%d%H%M%S')}.mp4"
+                        # out = cv2.VideoWriter(filename ,cv2.VideoWriter_fourcc(*'mp4v'), fps, (640,480))
+                        out = cv2.VideoWriter(filename ,cv2.VideoWriter_fourcc(*'mp4v'), fps, (int(cap.get(3)), int(cap.get(4))))
+                    out.write(frame)
+            
+                    if is_N == False:
+                        is_N = True
+                elif is_risky == 'P' and is_risky_crop == 'P':
+                    if is_N == True:
+                        # frame write here
+                        out.write(frame)
+
+                        if (frame_time - start_time).seconds > CLIP_TIME:
                             risk_section = [start_time, frame_time]
                             print(f"RISK SECTION: {risk_section}")
 
@@ -264,12 +293,6 @@ def generateCaption(input_object):
                 y_vector.clear()
             pbar.update(1)
             frame_count += 1
-        # video 처리 끝나고 남아있는 risk_section 처리
-        # if risk_section:
-        #     if input_type == 'video':
-        #         detect_risky_section(conn, video_uid, video_id, risk_section)
-        #     elif input_type == 'stream':
-        #         detect_risky_section_stream(conn, camera_id, risk_section)
     cap.release()
 
 
@@ -313,13 +336,13 @@ def generate_sentimental_score(caption_sentence):
     return predictions[0].tolist()
 
 
-def detect_risky_section(conn, video_uid, video_id, risk_section):
+def detect_risky_section(conn, video_uid, video_id, risk_section, clip_url):
     try:
         start_frame = risk_section[0]
         end_frame = risk_section[-1]
         with conn.cursor() as cursor:
-            sql = f"INSERT INTO `{RISK_TABLE}` (`video_id`, `video_uid`, `start_frame`, `end_frame`, `created_at`) VALUES (%s, %s, %s, %s, NOW())"
-            cursor.execute(sql, (video_id, video_uid, start_frame, end_frame))
+            sql = f"INSERT INTO `{RISK_TABLE}` (`video_id`, `video_uid`, `clip_url`, `start_frame`, `end_frame`, `created_at`) VALUES (%s, %s, %s, %s, NOW())"
+            cursor.execute(sql, (video_id, video_uid, clip_url, start_frame, end_frame))
             conn.commit()
         logger.info(f"[!] Found Risky Section: {start_frame} ~ {end_frame}")
     except Exception as e:

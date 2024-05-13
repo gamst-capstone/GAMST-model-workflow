@@ -30,11 +30,13 @@ def upload_to_s3(bucket, filename):
         aws_secret_access_key=os.environ.get('AWS_SECRET_ACCESS_KEY')
     )
 
+    key = f"clip/{filename}"
+
     try:
-        res = s3.upload_file(filename, bucket, filename)
+        res = s3.upload_file(filename, bucket, key)
         return {
             "status": True,
-            "file_url": f"https://{bucket}.s3.amazonaws.com/{filename}"
+            "file_url": f"https://{bucket}.s3.amazonaws.com/{key}"
         }
     except Exception as e:
         print(e)
