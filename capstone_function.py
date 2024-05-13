@@ -330,8 +330,8 @@ def generate_sentimental_score(caption_sentence):
     predictions = torch.softmax(logits, dim=-1)
 
     # 결과 해석
-    print(f"Input: {caption_sentence}")
-    print(f"Predictions: {predictions[0].tolist()}")
+    logger.info(f"Input: {caption_sentence}")
+    logger.info(f"Predictions: {predictions[0].tolist()}")
 
     return predictions[0].tolist()
 
@@ -341,7 +341,7 @@ def detect_risky_section(conn, video_uid, video_id, risk_section, clip_url):
         start_frame = risk_section[0]
         end_frame = risk_section[-1]
         with conn.cursor() as cursor:
-            sql = f"INSERT INTO `{RISK_TABLE}` (`video_id`, `video_uid`, `clip_url`, `start_frame`, `end_frame`, `created_at`) VALUES (%s, %s, %s, %s, NOW())"
+            sql = f"INSERT INTO `{RISK_TABLE}` (`video_id`, `video_uid`, `clip_url`, `start_frame`, `end_frame`, `created_at`) VALUES (%s, %s, %s, %s, %s, NOW())"
             cursor.execute(sql, (video_id, video_uid, clip_url, start_frame, end_frame))
             conn.commit()
         logger.info(f"[!] Found Risky Section: {start_frame} ~ {end_frame}")
