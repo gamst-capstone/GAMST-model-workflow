@@ -229,7 +229,7 @@ def generateCaption(input_object):
                     # TODO : file save path 
                     if out is None:
                         filename = f"output_video_{video_uid}_{video_clip_num}.mp4"
-                        out = cv2.VideoWriter(filename ,cv2.VideoWriter_fourcc(*'mp4v'), fps, (int(cap.get(3)), int(cap.get(4))))
+                        out = cv2.VideoWriter(filename ,cv2.VideoWriter_fourcc(*'avc1'), fps, (int(cap.get(3)), int(cap.get(4))))
                     out.write(frame)
             
                     if is_N == False:
@@ -265,7 +265,7 @@ def generateCaption(input_object):
                     if out is None:
                         filename = f"output_{start_time.strftime('%y%m%d%H%M%S')}.mp4"
                         # out = cv2.VideoWriter(filename ,cv2.VideoWriter_fourcc(*'mp4v'), fps, (640,480))
-                        out = cv2.VideoWriter(filename ,cv2.VideoWriter_fourcc(*'mp4v'), fps, (int(cap.get(3)), int(cap.get(4))))
+                        out = cv2.VideoWriter(filename ,cv2.VideoWriter_fourcc(*'avc1'), fps, (int(cap.get(3)), int(cap.get(4))))
                     out.write(frame)
             
                     if is_N == False:
