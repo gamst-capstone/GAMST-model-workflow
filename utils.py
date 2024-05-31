@@ -1,4 +1,4 @@
-import boto3, os
+import boto3, os, cv2
 
 def video_id_check(conn, video_uid):
     with conn.cursor() as cursor:
@@ -52,3 +52,11 @@ def upload_to_s3(bucket, filename):
         return {
             "status": False
         }
+
+def video_length_in_seconds(video_path):
+    cap = cv2.VideoCapture(video_path)
+    fps = cap.get(cv2.CAP_PROP_FPS)  # Frames per second
+    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    duration = frame_count / fps
+    cap.release()
+    return round(duration)

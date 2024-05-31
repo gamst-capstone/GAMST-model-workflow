@@ -11,7 +11,7 @@ import pymysql
 import os, logging
 import torch
 
-from utils import video_id_check, camera_id_check, upload_to_s3
+from utils import video_id_check, camera_id_check, upload_to_s3, video_length_in_seconds
 
 
 logger = logging.getLogger()
@@ -246,10 +246,12 @@ def generateCaption(input_object):
 
                             # risk section video 추출
                             out.release()
+
+                            clip_length = video_length_in_seconds(filename)
                             res = upload_to_s3(VIDEO_BUCKET, filename)
                             if res.get('status'):
                                 logger.info(f"[V] Clip URL : {res.get('file_url')}")
-                                detect_risky_section(conn, video_uid, video_id, risk_section, res.get('file_url'))
+                                detect_risky_section(conn, video_uid, video_id, risk_section, res.get('file_url'), clip_length)
                                 video_clip_num += 1
                             out = None
                             is_N = False
@@ -282,10 +284,12 @@ def generateCaption(input_object):
 
                             # risk section video 추출
                             out.release()
+
+                            clip_length = video_length_in_seconds(filename)
                             res = upload_to_s3(VIDEO_BUCKET, filename)
                             if res.get('status'):
                                 logger.info(f"[V] Clip URL : {res.get('file_url')}")
-                                detect_risky_section_stream(conn, camera_id, risk_section, res.get('file_url'))
+                                detect_risky_section_stream(conn, camera_id, risk_section, res.get('file_url'), clip_length)
                             out = None
                             is_N = False
                             start_time = 0
@@ -298,9 +302,10 @@ def generateCaption(input_object):
 
 def parse_caption(conn, video_id, frame_num, caption, sentiment_score, is_risky):
     try:
+        current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S') 
         with conn.cursor() as cursor:
-            sql = f"INSERT INTO `{CAPTION_TABLE}` (`video_id`, `frame_number`, `sentence`, `sentiment_score`, `sentiment_result`, `created_at`) VALUES (%s, %s, %s, %s, %s, NOW())"
-            cursor.execute(sql, (video_id, frame_num, caption, format(sentiment_score, '.10f'), is_risky))
+            sql = f"INSERT INTO `{CAPTION_TABLE}` (`video_id`, `frame_number`, `sentence`, `sentiment_score`, `sentiment_result`, `created_at`) VALUES (%s, %s, %s, %s, %s, %s)"
+            cursor.execute(sql, (video_id, frame_num, caption, format(sentiment_score, '.10f'), is_risky, current_time))
             conn.commit()
     except Exception as e:
         logger.error(e)
@@ -308,10 +313,11 @@ def parse_caption(conn, video_id, frame_num, caption, sentiment_score, is_risky)
     
 def stream_parse_caption(conn, camera_id, frame_time, caption, sentiment_score, is_risky):
     try:
+        current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S') 
         logger.info(f"[STREAM] Frame Time : {str(frame_time)}")
         with conn.cursor() as cursor:
-            sql = f"INSERT INTO `camera_caption` (`camera_id`, `sentence`, `sentiment_score`, `sentiment_result`, `created_at`) VALUES (%s, %s, %s, %s, NOW())"
-            cursor.execute(sql, (camera_id, caption, format(sentiment_score, '.10f'), is_risky))
+            sql = f"INSERT INTO `camera_caption` (`camera_id`, `sentence`, `sentiment_score`, `sentiment_result`, `created_at`) VALUES (%s, %s, %s, %s, %s)"
+            cursor.execute(sql, (camera_id, caption, format(sentiment_score, '.10f'), is_risky, current_time))
             conn.commit()
     except Exception as e:
         logger.error(e)
@@ -336,26 +342,28 @@ def generate_sentimental_score(caption_sentence):
     return predictions[0].tolist()
 
 
-def detect_risky_section(conn, video_uid, video_id, risk_section, clip_url):
+def detect_risky_section(conn, video_uid, video_id, risk_section, clip_url, clip_length):
     try:
         start_frame = risk_section[0]
         end_frame = risk_section[-1]
+        current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S') 
         with conn.cursor() as cursor:
-            sql = f"INSERT INTO `{RISK_TABLE}` (`video_id`, `video_uid`, `clip_url`, `start_frame`, `end_frame`, `created_at`) VALUES (%s, %s, %s, %s, %s, NOW())"
-            cursor.execute(sql, (video_id, video_uid, clip_url, start_frame, end_frame))
+            sql = f"INSERT INTO `{RISK_TABLE}` (`video_id`, `video_uid`, `clip_url`, `length`, `start_frame`, `end_frame`, `created_at`) VALUES (%s, %s, %s, %s, %s, %s, %s)"
+            cursor.execute(sql, (video_id, video_uid, clip_url, clip_length, start_frame, end_frame, current_time))
             conn.commit()
         logger.info(f"[!] Found Risky Section: {start_frame} ~ {end_frame}")
     except Exception as e:
         logger.error(e)
         return
     
-def detect_risky_section_stream(conn, camera_id, risk_section, clip_url):
+def detect_risky_section_stream(conn, camera_id, risk_section, clip_url, clip_length):
     try:
         start_time = str(risk_section[0])
         end_time = str(risk_section[-1])
+        current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S') 
         with conn.cursor() as cursor:
-            sql = f"INSERT INTO `camera_riskysection` (`camera_id`, `video_uid`, `section_video_url`, `start_time`, `end_time`, `created_at`) VALUES (%s, %s, %s, %s, %s, NOW())"
-            cursor.execute(sql, (camera_id, risk_section[0].strftime('%y%m%d%H%M%S'), clip_url, start_time, end_time))
+            sql = f"INSERT INTO `camera_riskysection` (`camera_id`, `video_uid`, `section_video_url`, `start_time`, `end_time`, `length`, `created_at`) VALUES (%s, %s, %s, %s, %s, %s, %s)"
+            cursor.execute(sql, (camera_id, risk_section[0].strftime('%y%m%d%H%M%S'), clip_url, start_time, end_time, clip_length, current_time))
             conn.commit()
         logger.info(f"[!] Found Risky Section: {start_time} ~ {end_time}")
     except Exception as e:
